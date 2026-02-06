@@ -268,7 +268,7 @@ class Maria(IDevice):
         """
         cpu = self._m.cpu
         self._start_of_frame_cpu_clock = (
-            cpu.Clock + (cpu.RunClocks // cpu.RunClocksMultiple)
+            cpu.clock + (cpu.run_clocks // cpu.run_clocks_multiple)
         )
         self._lightgun_first_sample_cpu_clock = 0
         self._tia_sound.start_frame()
@@ -338,7 +338,7 @@ class Maria(IDevice):
         is the integer quotient of the elapsed colour clocks since the
         start of the frame divided by 114.
         """
-        return (self._m.cpu.Clock - self._start_of_frame_cpu_clock) // 114
+        return (self._m.cpu.clock - self._start_of_frame_cpu_clock) // 114
 
     # ------------------------------------------------------------------
     # Display-list / line-RAM builders
@@ -1074,7 +1074,7 @@ class Maria(IDevice):
 
         elif addr == WSYNC:
             # Request a CPU preemption to service the WSYNC delay.
-            self._m.cpu.EmulatorPreemptRequest = True
+            self._m.cpu.emulator_preempt_request = True
 
         elif addr == CTRL:
             self._color_kill = (data & 0x80) != 0
@@ -1155,7 +1155,7 @@ class Maria(IDevice):
             cpu = self._m.cpu
 
             if self._lightgun_first_sample_cpu_clock == 0:
-                self._lightgun_first_sample_cpu_clock = cpu.Clock
+                self._lightgun_first_sample_cpu_clock = cpu.clock
                 self._lightgun_frame_samples = 0
                 sl, hp = mi.sample_captured_light_gun_position(player_no)
                 self._lightgun_sampled_scanline = sl
@@ -1173,7 +1173,7 @@ class Maria(IDevice):
                  - self._start_of_frame_cpu_clock) << 2
             )
             maria_clocks_since_first = int(
-                (cpu.Clock - self._lightgun_first_sample_cpu_clock) << 2
+                (cpu.clock - self._lightgun_first_sample_cpu_clock) << 2
             )
             adjustment_maria_clocks = round(
                 self._lightgun_frame_samples * magic_adjustment_factor
@@ -1242,7 +1242,7 @@ class Maria(IDevice):
         self._dl = self._word(dll2, dll1)
 
         if dli:
-            self._m.cpu.NMIInterruptRequest = True
+            self._m.cpu.nmi_interrupt_request = True
             # DMA TIMING: One tick between DMA Shutdown and DLI
             self._dma_clocks += 1
 
