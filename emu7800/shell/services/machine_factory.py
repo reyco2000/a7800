@@ -48,36 +48,41 @@ def _make_default_bios_7800() -> Bios7800:
     """Create a minimal 4 KB BIOS stub for the Atari 7800.
 
     This stub does not execute the real BIOS startup sequence; it simply
-    places a ``JMP ($FFFC)`` at the reset vector so the CPU jumps straight
-    to the cartridge entry point.
+    jumps to the cartridge entry point via an indirect JMP through $FFFC.
+
+    The stub also writes to INPTCTRL ($01) to disable the BIOS and
+    enable the cartridge ROM before jumping.
 
     Layout (4096 bytes, base address $F000):
-      - $FFFC-$FFFD (offsets 0xFFC-0xFFD): Reset vector -> $FFF8
-      - $FFF8-$FFFA (offsets 0xFF8-0xFFA): JMP ($FFFC) = 6C FC FF
-      - Everything else is 0x00 (NOP sled on 6502 is effectively BRK,
-        but we never execute any of it).
-
-    .. note:: A real BIOS image is recommended for full compatibility.
+      - $FFF0-$FFF7: Bootstrap code (write INPTCTRL, then JMP ($FFFC))
+      - $FFFA-$FFFB: NMI vector -> $FFF0
+      - $FFFC-$FFFD: Reset vector -> $FFF0
+      - $FFFE-$FFFF: IRQ vector -> $FFF0
     """
     rom = bytearray(4096)
 
-    # Place an indirect JMP through the cart's reset vector at $FFF8.
-    # 6502 opcode: JMP (abs) = 0x6C, followed by the 16-bit address $FFFC
-    # in little-endian.
-    rom[0xFF8] = 0x6C  # JMP indirect
-    rom[0xFF9] = 0xFC  # low byte of $FFFC
-    rom[0xFFA] = 0xFF  # high byte of $FFFC
+    # Bootstrap code at $FFF0 (offset 0xFF0):
+    #   LDA #$07      ; A9 07  -- lock=1, maria_enable=1, bios_disable=1
+    #   STA $01       ; 85 01  -- write INPTCTRL to swap out BIOS
+    #   JMP ($FFFC)   ; 6C FC FF -- indirect jump through cart reset vector
+    rom[0xFF0] = 0xA9  # LDA #imm
+    rom[0xFF1] = 0x07  # lock + maria enable + bios disable
+    rom[0xFF2] = 0x85  # STA zp
+    rom[0xFF3] = 0x01  # INPTCTRL
+    rom[0xFF4] = 0x6C  # JMP (abs)
+    rom[0xFF5] = 0xFC  # low byte of $FFFC
+    rom[0xFF6] = 0xFF  # high byte of $FFFC
 
-    # Set the BIOS reset vector itself to point at $FFF8.
-    rom[0xFFC] = 0xF8  # low byte -> $FFF8
-    rom[0xFFD] = 0xFF  # high byte
-
-    # NMI vector -> also point at $FFF8 (a safe no-op landing).
-    rom[0xFFA] = 0xF8
+    # NMI vector -> $FFF0
+    rom[0xFFA] = 0xF0
     rom[0xFFB] = 0xFF
 
-    # IRQ vector -> $FFF8
-    rom[0xFFE] = 0xF8
+    # Reset vector -> $FFF0
+    rom[0xFFC] = 0xF0
+    rom[0xFFD] = 0xFF
+
+    # IRQ vector -> $FFF0
+    rom[0xFFE] = 0xF0
     rom[0xFFF] = 0xFF
 
     return Bios7800(bytes(rom))
@@ -200,12 +205,11 @@ class MachineFactory:
     def _load_bios(
         bios_path: Optional[str],
         machine_type: MachineType,
-    ) -> Bios7800:
-        """Load a 7800 BIOS image or create a default stub.
+    ) -> Optional[Bios7800]:
+        """Load a 7800 BIOS image, or return None if not provided.
 
-        For 2600 machine types the BIOS is never executed, but a valid
-        :class:`Bios7800` is still returned so that callers never receive
-        ``None``.
+        When no BIOS is supplied, the machine boots directly from the
+        cartridge reset vector.  Most games work without a BIOS.
 
         Parameters
         ----------
@@ -216,7 +220,7 @@ class MachineFactory:
 
         Returns
         -------
-        Bios7800
+        Optional[Bios7800]
         """
         if bios_path is not None:
             bios_path = os.path.expanduser(bios_path)
@@ -231,12 +235,12 @@ class MachineFactory:
             )
             return Bios7800(bios_data)
 
-        # No BIOS supplied -- use the built-in stub.
+        # No BIOS supplied -- boot directly from cartridge.
         logger.info(
-            "No BIOS path supplied; using built-in 4 KB stub for %s",
+            "No BIOS path supplied; booting directly from cartridge for %s",
             machine_type.name,
         )
-        return _make_default_bios_7800()
+        return None
 
     @staticmethod
     def describe(rom_path: str) -> dict[str, str]:
