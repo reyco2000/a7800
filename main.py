@@ -145,6 +145,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Increase log verbosity (-v for INFO, -vv for DEBUG).",
     )
 
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        default=False,
+        help="Print Maria/TIA diagnostic info for the first 5 frames and exit.",
+    )
+
     return parser
 
 
@@ -194,6 +201,67 @@ def _print_rom_info(rom_path: str) -> None:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+def _run_debug(machine) -> int:
+    """Run a few frames and print Maria/TIA diagnostic information."""
+    print("=" * 60)
+    print("EMU7800 Debug Diagnostics")
+    print("=" * 60)
+    print(f"Machine: {machine}")
+    print(f"CPU PC after reset: ${machine.cpu.pc:04X}")
+    print(f"CPU jammed: {machine.cpu.jammed}")
+
+    is_7800 = hasattr(machine, '_maria')
+
+    machine.reset()
+    print(f"CPU PC after reset: ${machine.cpu.pc:04X}")
+
+    for frame_no in range(5):
+        machine.compute_next_frame()
+
+        fb = machine.frame_buffer
+        vbuf = fb.video_buffer
+        non_zero = sum(1 for b in vbuf if b != 0)
+        unique_vals = set(vbuf)
+
+        print(f"\n--- Frame {frame_no + 1} ---")
+        print(f"  CPU: PC=${machine.cpu.pc:04X} jammed={machine.cpu.jammed} clock={machine.cpu.clock}")
+
+        if is_7800:
+            maria = machine._maria
+            regs = maria._registers
+            print(f"  Maria: dma_enabled={maria._dma_enabled} rm={maria._rm}")
+            print(f"  Maria: color_kill={maria._color_kill} cwidth={maria._cwidth} kangaroo={maria._kangaroo}")
+            print(f"  Maria: ctrl_lock={maria._ctrl_lock}")
+            print(f"  Maria DPPL=${regs[0x30]:02X} DPPH=${regs[0x2C]:02X} → DLL=${regs[0x2C]:02X}{regs[0x30]:02X}")
+            print(f"  Maria BACKGRND=${regs[0x20]:02X} CHARBASE=${regs[0x34]:02X}")
+            print(f"  Palettes: P0=[{regs[0x21]:02X},{regs[0x22]:02X},{regs[0x23]:02X}] "
+                  f"P1=[{regs[0x25]:02X},{regs[0x26]:02X},{regs[0x27]:02X}]")
+        else:
+            tia = machine._tia
+            print(f"  TIA: end_of_frame={tia.end_of_frame}")
+            print(f"  TIA: COLUBK=${tia.colubk:02X} COLUPF=${tia.colupf:02X} "
+                  f"COLUP0=${tia.colup0:02X} COLUP1=${tia.colup1:02X}")
+
+        print(f"  Video buffer: {non_zero}/{len(vbuf)} non-zero pixels")
+        print(f"  Unique palette indices: {sorted(unique_vals)[:20]}"
+              + ("..." if len(unique_vals) > 20 else ""))
+
+        # Sample a few scanlines
+        pitch = fb.visible_pitch
+        for sl in [0, 16, 50, 100, 130]:
+            start = sl * pitch
+            end = start + pitch
+            line_data = vbuf[start:end]
+            line_nz = sum(1 for b in line_data if b != 0)
+            line_unique = sorted(set(line_data))
+            if line_nz > 0:
+                print(f"  Scanline {sl}: {line_nz} non-zero, vals={line_unique[:10]}")
+
+    print("\n" + "=" * 60)
+    print("Debug complete.")
+    return 0
+
 
 def main(argv: Optional[list[str]] = None) -> int:
     """Application entry point.
@@ -249,6 +317,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         logger.exception("Failed to create machine")
         print(f"Error creating machine: {exc}", file=sys.stderr)
         return 1
+
+    # Debug mode: run a few frames and print diagnostics.
+    if args.debug:
+        return _run_debug(machine)
 
     # Launch the window.
     logger.info("Starting emulation ...")
