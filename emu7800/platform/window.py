@@ -218,6 +218,16 @@ class Window:
         # ---- video -------------------------------------------------------
         surface = self._frame_renderer.render()
 
+        # DEBUG TRACE
+        if self._frame_count % 60 == 0:
+            import numpy as np
+            try:
+                arr = pygame.surfarray.array3d(surface)
+                nz = np.count_nonzero(arr)
+                logger.info(f"Tick {self._frame_count}: surface non-zero pixels={nz}")
+            except Exception as e:
+                logger.error(f"Tick debug error: {e}")
+
         # Scale to display size.  If the window has been resized, adjust to
         # the new dimensions.
         current_size = self._screen.get_size()

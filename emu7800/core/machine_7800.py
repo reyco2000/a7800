@@ -62,6 +62,7 @@ from typing import TYPE_CHECKING, List, Optional
 
 from emu7800.core.machine_base import MachineBase
 from emu7800.core.devices import RAM6116
+from emu7800.core.types import Controller
 
 if TYPE_CHECKING:
     from emu7800.core.address_space import AddressSpace
@@ -298,6 +299,10 @@ class Machine7800(MachineBase):
         if self._bios is not None:
             self.swap_in_bios()
 
+        # Connect controllers so PIA can read them.
+        self.input_state.left_controller_jack = Controller(self.p1)
+        self.input_state.right_controller_jack = Controller(self.p2)
+
         self.cpu.reset()
         self._maria.reset()
         self.pia.reset()
@@ -345,7 +350,10 @@ class Machine7800(MachineBase):
             if cpu.jammed:
                 break
 
-            start_of_scanline: int = cpu.clock
+            # Compute the effective CPU clock at the start of this
+            # scanline.  run_clocks may be negative (leftover debt from
+            # the previous scanline), so we must account for it.
+            start_of_scanline: int = cpu.clock + (cpu.run_clocks // cpu.run_clocks_multiple)
 
             # -- Phase 1: HBLANK (7 CPU clocks) --
             cpu.run_clocks += 7 * rcm
@@ -355,48 +363,50 @@ class Machine7800(MachineBase):
             if cpu.jammed:
                 break
 
-            # -- Phase 2: Check for CPU preempt request --
-            # A preempt means the CPU wrote to a register (like WSYNC)
-            # that should halt it for the rest of the scanline.  Maria
-            # still does DMA, and the leftover clocks are padded out.
+            # -- Phase 2: Check for CPU preempt request (WSYNC) --
             if cpu.emulator_preempt_request:
                 cpu.emulator_preempt_request = False
                 maria.do_dma_processing()
-                clocks_used: int = cpu.clock - start_of_scanline
-                leftover: int = self.CLOCKS_PER_SCANLINE - clocks_used
-                if leftover > 0:
-                    cpu.clock += leftover
+                remaining_cpu_clocks = self.CLOCKS_PER_SCANLINE - (cpu.clock - start_of_scanline)
+                cpu.clock += remaining_cpu_clocks
                 cpu.run_clocks = 0
                 continue
 
             # -- Phase 3: Maria DMA --
             dma_clocks: int = maria.do_dma_processing()
 
-            if dma_clocks >= 0 and dma_clocks > 0:
-                # DMA steals clocks from the CPU.  Round up to the
-                # nearest ``run_clocks_multiple`` boundary so the CPU
-                # clock stays aligned.
-                if (dma_clocks % rcm) != 0:
-                    dma_cpu_clocks: int = (dma_clocks // rcm) + 1
-                    dma_clocks = dma_cpu_clocks * rcm
-                else:
-                    dma_cpu_clocks = dma_clocks // rcm
+            # Ace of Aces title-screen flicker workaround (from C#).
+            if (_scanline == 203 and fb.scanlines == 262) or \
+               (_scanline == 228 and fb.scanlines == 312):
+                if dma_clocks == 152 and remaining == 428 and \
+                   cpu.run_clocks in (-4, -8):
+                    dma_clocks -= 4
 
-                cpu.clock += dma_cpu_clocks
+            # KLAX safety valve: if Maria DMA exceeds the available
+            # scanline budget, halve it repeatedly until it fits.
+            while cpu.run_clocks + remaining < dma_clocks:
+                dma_clocks >>= 1
+
+            if dma_clocks > 0:
+                # Round DMA clocks up to the next div-4 boundary so the
+                # CPU clock stays aligned with RunClocksMultiple.
+                if (dma_clocks & 3) != 0:
+                    dma_clocks += 4
+                    dma_clocks -= dma_clocks & 3
+
+                cpu.clock += dma_clocks // rcm
                 cpu.run_clocks -= dma_clocks
 
             # -- Phase 4: Give CPU the remaining scanline clocks --
             cpu.run_clocks += remaining
             cpu.execute()
 
-            # -- Phase 5: Handle end-of-scanline preempt --
+            # -- Phase 5: Align to scanline boundary --
             if cpu.emulator_preempt_request:
                 cpu.emulator_preempt_request = False
-
-            # -- Phase 6: Align to scanline boundary --
-            clocks_used = cpu.clock - start_of_scanline
-            if clocks_used < self.CLOCKS_PER_SCANLINE:
-                cpu.clock += self.CLOCKS_PER_SCANLINE - clocks_used
+            remaining_cpu_clocks = self.CLOCKS_PER_SCANLINE - (cpu.clock - start_of_scanline)
+            if remaining_cpu_clocks > 0:
+                cpu.clock += remaining_cpu_clocks
             cpu.run_clocks = 0
 
         if hasattr(cart, "end_frame") and callable(cart.end_frame):
