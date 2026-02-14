@@ -233,7 +233,7 @@ def _run_debug(machine) -> int:
             print(f"  Maria: dma_enabled={maria._dma_enabled} rm={maria._rm}")
             print(f"  Maria: color_kill={maria._color_kill} cwidth={maria._cwidth} kangaroo={maria._kangaroo}")
             print(f"  Maria: ctrl_lock={maria._ctrl_lock}")
-            print(f"  Maria DPPL=${regs[0x30]:02X} DPPH=${regs[0x2C]:02X} → DLL=${regs[0x2C]:02X}{regs[0x30]:02X}")
+            print(f"  Maria DPPL=${regs[0x30]:02X} DPPH=${regs[0x2C]:02X} -> DLL=${regs[0x2C]:02X}{regs[0x30]:02X}")
             print(f"  Maria BACKGRND=${regs[0x20]:02X} CHARBASE=${regs[0x34]:02X}")
             print(f"  Palettes: P0=[{regs[0x21]:02X},{regs[0x22]:02X},{regs[0x23]:02X}] "
                   f"P1=[{regs[0x25]:02X},{regs[0x26]:02X},{regs[0x27]:02X}]")
@@ -324,6 +324,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     # Launch the window.
     logger.info("Starting emulation ...")
+    machine.reset()
     try:
         window = Window(
             machine,
